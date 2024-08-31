@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        /* General */
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            /* font-size: 1rem; ??? */
+            /* font-size: 20px; */
+        }
+
+        ul {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+    </style>
+    <style>
+        /* App */
+
+        main {
+            display: flex;
+            height: 100vh;
+        }
+
+        .notes {
+            width: 25%;
+            padding: 20px;
+            border-right: 1px solid #0001;
+        }
+
+        .content {
+            width: 75%;
+            padding: 20px;
+        }
+
+        @media (max-width: 800px) {
+            .notes {
+                display: none;
+                width: 100%;
+            }
+
+            .content {
+                width: 100%;
+            }
+        }
+
+        ul {
+            height: 100%;
+            position: relative;
+        }
+
+        li {
+            width: 100%;
+            background-color: white;
+            /* border-bottom: 1px solid #0001; */
+        }
+
+        input,
+        textarea {
+            width: 100%;
+            background-color: transparent;
+            border: none;
+            /* font-size: 1rem; */
+        }
+    </style>
+
+    <script type="module">
+        import conf from './config.js';
+        import db from './db.js';
+
+        window.conf = conf;
+        window.db = db;
+    </script>
+
+    <script>
+        const ARROW_DOWN_KEY = 'ArrowDown'
+        const ARROW_UP_KEY = 'ArrowUp'
+        const BACKSPACE_KEY = 'Backspace'
+        const ENTER_KEY = 'Enter'
+        const DRAG_TRIGGER_TIME = 500
+
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('main', () => ({
+                config: conf.load(),
+                loaded: false,
+                async init() {
+                    console.debug('main init')
+                    await db.connect(this.config.db)
+                    // await seedDb(db) // DEV
+                    this.loaded = true
+                },
+            }))
+            Alpine.data('content', () => ({
+                items: [],
+                contentLoaded: false,
+                async init() {
+                    console.debug('content init')
+                    this.items = await db.findItems()
+                    this.contentLoaded = true
+                },
+                async createFirstOrFocusLast() {
+                    if (this.items.length === 0) {
+                        this.createItemAndFocus('', this.items.length)
+                    } else {
+                        this.focus(this.items.length - 1)
+                    }
+                },
+                async createItemAndFocus(text, position) {
+                    const item = await db.createItem(text, position)
+                    this.items.splice(position, 0, item)
+                    this.focus(position)
+                },
+                async focus(position) {
+                    console.debug('focusing', position)
+                    if (position < 0) {
+                        throw new Error('negative position')
+                    }
+                    await this.$nextTick()
+                    const itemElementList = document.querySelectorAll('textarea')
+                    itemElementList[position].focus()
+                },
+            }))
+            Alpine.data('item', (position) => ({
+                ignoreClick(event) {
+                    event.stopPropagation()
+                },
+            }))
+            Alpine.data('itemInput', (position) => ({
+                deleting: null,
+                async handleKeyDown(event) {
+                    console.debug('KeyDown event', event, event.key, this.items.length)
+                    const currentText = event.target.value
+                    const cursorPosition = event.target.selectionEnd
+                    switch (event.key) {
+                        case ARROW_DOWN_KEY: {
+                            // TODO: handle multiline textarea
+                            const newPosition = position + 1
+                            if (newPosition < this.items.length) {
+                                this.focus(newPosition) // TODO: keep cursor position
+                            }
+                            break
+                        }
+                        case ARROW_UP_KEY: {
+                            // TODO: handle multiline textarea
+                            const newPosition = position - 1
+                            if (newPosition >= 0) {
+                                this.focus(newPosition) // TODO: keep cursor position
+                            }
+                            break
+                        }
+                        case BACKSPACE_KEY: {
+                            // TODO: fix: ??? (test until it breaks)
+                            if (cursorPosition === 0 && position > 0) {
+                                await db.deleteItem(position)
+                                this.items.splice(position, 1)
+                                const previousItem = this.items[position - 1]
+                                previousItem.text += currentText
+                                // TODO: fix: no focus when single item left
+                                if (this.items.length > 1) {
+                                    this.focus(Math.max(position - 1, 0))
+                                }
+                            }
+                            break
+                        }
+                        case ENTER_KEY: {
+                            // TODO: handle shift+enter to add linebreak instead of item
+                            if (cursorPosition < currentText.length) {
+                                const item = this.items[position]
+                                const first = currentText.slice(0, cursorPosition)
+                                const second = currentText.slice(cursorPosition)
+                                await db.updateItemText(item, first)
+                                item.text = first
+                                this.createItemAndFocus(second, position + 1)
+                            } else {
+                                this.createItemAndFocus('', position + 1)
+                            }
+                            event.preventDefault()
+                            break
+                        }
+                    }
+                },
+                // async handleKeyUp(event) {
+                //     console.debug('KeyUp event', event, event.key, this.items.length)
+                //     if (this.deleting) {
+                //         await db.deleteItem(position)
+                //         this.items.splice(position, 1)
+                //         item.text += deleting
+                //         // TODO: fix: no focus when single item left
+                //         if (this.items.length > 1) {
+                //             this.focus(Math.max(position - 1, 0))
+                //         }
+                //     }
+                // },
+                async handleInput(event) {
+                    console.debug('Input event', event)
+                    const item = this.items[position]
+                    await db.updateItemText(item, event.target.value)
+                },
+            }))
+        })
+
+        async function seedDb(db) {
+            // await db.createItem('eeeee', 0)
+            // await db.createItem('dddd', 0)
+            // await db.createItem('ccc', 0)
+            // await db.createItem('bb', 0)
+            // await db.createItem('a', 0)
+            const itemCount = 20;
+            const promises = Array.from(Array(itemCount)).map((_, i) => db.createItem(i, i))
+            await Promise.all(promises);
+        }
+
+        // TODO: fix dragging
+        const dragHandler = getDragHandler()
+
+        function getDragHandler() {
+            let timeout = null
+            let dragging = false
+            let elementStartPosition, mouseStartPosition, elementHeight
+
+            return {
+                handleMouseDown(downEvent) {
+                    console.debug('MouseDown event', downEvent)
+                    timeout = setTimeout(() => {
+                        elementStartPosition = element.offsetTop
+                        mouseStartPosition = downEvent.pageY
+                        elementHeight = element.offsetHeight
+                        document.onmousemove = (moveEvent) => {
+                            // console.debug('MouseMove event', moveEvent, moveEvent.clientY, moveEvent.layerY, moveEvent.pageY, moveEvent.offsetY, moveEvent.screenY)
+                            const mouseOffset = moveEvent.pageY - mouseStartPosition
+                            const elementPosition = elementStartPosition + mouseOffset
+                            element.style.position = 'absolute'
+                            element.style.top = `${elementPosition}px`
+
+                            // TODO: handle scroll
+                            // TODO: scroll after delay
+                        }
+                        dragging = true
+                        console.debug('dragging started', { elementStartPosition, mouseStartPosition })
+                    }, DRAG_TRIGGER_TIME)
+                },
+                async handleMouseUp(e) {
+                    console.debug('MouseUp event', e)
+                    if (timeout !== null) {
+                        clearTimeout(timeout)
+                        timeout = null
+                    }
+                    if (dragging) {
+                        document.onmousemove = null
+
+                        if (elementList.length > 1) {
+                            // find closest gap to center of input
+                            const elementCenterPosition = element.offsetTop + element.offsetHeight / 2
+                            const newPosition = Math.min(Math.round(elementCenterPosition / elementHeight), elementList.length - 1)
+                            console.debug('new item position', { position, newPosition, elementHeight, elementCenterPosition }, elementList.length)
+                            // await moveElement(position, newPosition)
+                            // db.moveItem
+                        }
+
+                        dragging = false
+                        // refresh() // resets position style
+                        console.debug('dragging stopped')
+                    }
+                }
+            }
+        }
+
+        /*
+        TODO
+        - migrate to alpinejs
+        - scroll when cursor moves near to edge
+        - add mobile support
+        - allow editing offline
+        - resolve conflicts when back online
+        - render markdown in editor
+        - allow marking complete todo items
+        - allow multiple notes
+        - allow multiple notes
+        
+        Questions
+        - does overflow affect the positions?
+        - do we need to delete old list item elements? and their event handlers?
+        */
+    </script>
+
+    <script src="/third-party/tailwindcss.min.js"></script>
+    <script defer src="/third-party/alpinejs.min.js"></script>
+</head>
+
+<body>
+    <main x-data="main">
+        <div class="notes"></div>
+        <template x-if="loaded">
+            <div x-data="content" class="content">
+                <template x-if="contentLoaded">
+                    <ul @click="createFirstOrFocusLast">
+                        <template x-for="(item, position) in items" :key="item.id">
+                            <li x-data="item(position)" :style="item.y && { position: 'absolute' , top: `${y}px` }"
+                                @click="ignoreClick">
+                                <textarea x-data="itemInput(position)" x-model="item.text" rows="1"
+                                    @keydown="handleKeyDown" @input="handleInput" />
+                            </li>
+                        </template>
+                    </ul>
+                </template>
+            </div>
+        </template>
+    </main>
+</body>
+
+</html>
